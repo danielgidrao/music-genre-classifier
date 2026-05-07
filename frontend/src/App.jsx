@@ -81,7 +81,7 @@ function ConfusionHeatmap({ labels, matrix }) {
                 return (
                   <td
                     key={`${rowIdx}-${colIdx}`}
-                    style={{ backgroundColor: `rgba(35, 108, 255, ${0.08 + 0.85 * intensity})` }}
+                    style={{ backgroundColor: `rgba(30, 110, 65, ${0.08 + 0.85 * intensity})` }}
                   >
                     {value}
                   </td>
@@ -108,7 +108,7 @@ function PcaScatter({ data }) {
     const maxY = Math.max(...ys);
 
     const genreList = [...new Set(sample.map((p) => p.genre))];
-    const palette = ['#ff7f11', '#0a9396', '#ca6702', '#005f73', '#6a4c93', '#2b9348', '#c1121f', '#4361ee'];
+    const palette = ['#1b4332', '#2d6a4f', '#40916c', '#52b788', '#74c69d', '#95d5b2', '#388e5f', '#276749'];
     const colorByGenre = Object.fromEntries(genreList.map((g, idx) => [g, palette[idx % palette.length]]));
 
     return sample.map((p, idx) => {
@@ -328,7 +328,7 @@ export default function App() {
           ) : null}
         </Section>
 
-        <Section title="Distribuição dos gêneros" subtitle="Base de treino atual (Caminho A - metadata)">
+        <Section title="Distribuição dos gêneros" subtitle="Base de treinamento atual (features pré-computadas do metadata)">
           {loadingDashboard ? <p className="muted">Carregando...</p> : null}
           {genreDistribution.length > 0 ? (
             <HorizontalBars
@@ -392,19 +392,19 @@ export default function App() {
         </Section>
 
         <Section
-          title="Caminho A vs Caminho B"
-          subtitle="Como os approaches se conectam na apresentação"
+          title="Treinamento vs Demonstração"
+          subtitle="Como treinamento e demonstração se conectam na apresentação"
         >
           <div className="approach-grid">
             <article>
-              <h4>Caminho A (features pré-computadas)</h4>
+              <h4>Treinamento (features pré-computadas)</h4>
               <p>
                 É o caminho principal do treino atual, com features prontas do `features.csv`, rápido e estável para
                 modelagem.
               </p>
             </article>
             <article>
-              <h4>Caminho B (extração no upload)</h4>
+              <h4>Demonstração (extração no upload)</h4>
               <p>
                 O áudio enviado é transformado em features compatíveis com o esquema do modelo treinado, permitindo
                 testar MP3 novo no mesmo classificador.
