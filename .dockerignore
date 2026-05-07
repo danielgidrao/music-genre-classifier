@@ -1,0 +1,17 @@
+.git
+.gitignore
+.vscode
+
+__pycache__
+*.pyc
+
+frontend/node_modules
+frontend/dist
+
+models/*.pkl
+
+# Ignore heavy data in build context. Data will be mounted at runtime.
+data/raw
+data/processed
+
+node_modules

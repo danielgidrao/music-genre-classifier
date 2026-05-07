@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Environment
+.venv/
+venv/
+env/
+
+# Artifacts
+models/*.pkl
+data/processed/*.csv
+data/processed/*.json
+data/processed/*.png
+data/processed/*.txt
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+# Streamlit
+.streamlit/
+
+# macOS
+.DS_Store
