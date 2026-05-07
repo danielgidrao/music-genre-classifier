@@ -7,41 +7,6 @@ Projeto de classificação supervisionada multiclasse para prever gênero musica
 
 ## Estrutura
 
-```text
-music-genre-classifier/
-  README.md
-  requirements.txt
-  docker-compose.yml
-  docker/
-    Dockerfile.api
-    Dockerfile.frontend
-  data/
-    raw/
-    processed/
-  models/
-  notebooks/
-    01_exploratory_analysis.ipynb
-    02_training_models.ipynb
-  src/
-    __init__.py
-    config.py
-    load_data.py
-    extract_features.py
-    train.py
-    evaluate.py
-    predict.py
-    api.py
-    app.py
-  frontend/
-    package.json
-    vite.config.js
-    index.html
-    src/
-      main.jsx
-      App.jsx
-      styles.css
-```
-
 ## 1) Dataset FMA
 
 Repositório oficial: [mdeff/fma](https://github.com/mdeff/fma)
