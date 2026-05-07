@@ -8,6 +8,7 @@ from typing import Optional
 import librosa
 import numpy as np
 import pandas as pd
+from scipy import stats
 from tqdm import tqdm
 
 try:
@@ -18,6 +19,7 @@ try:
         SAMPLE_RATE,
         TRACKS_CSV,
         get_feature_columns,
+        get_fma_compatible_feature_columns,
     )
     from .load_data import load_tracks_metadata, filter_small_subset_with_known_genre
 except ImportError:  # pragma: no cover
@@ -28,6 +30,7 @@ except ImportError:  # pragma: no cover
         SAMPLE_RATE,
         TRACKS_CSV,
         get_feature_columns,
+        get_fma_compatible_feature_columns,
     )
     from load_data import load_tracks_metadata, filter_small_subset_with_known_genre
 
@@ -35,7 +38,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger(__name__)
 
 
-FEATURE_COLUMNS = get_feature_columns()
+FEATURE_COLUMNS_BASIC = get_feature_columns()
+FEATURE_COLUMNS_FMA_COMPAT = get_fma_compatible_feature_columns()
 
 
 def build_audio_path(track_id: int, audio_root: Path = FMA_AUDIO_DIR) -> Path:
@@ -49,28 +53,41 @@ def _safe_stats(array_2d_or_1d: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return np.mean(array_2d_or_1d, axis=1), np.std(array_2d_or_1d, axis=1)
 
 
-def extract_features(
+def _feature_stats_to_flattened(name: str, values: np.ndarray) -> dict[str, float]:
+    """Match flattened naming used by fma_metadata/features.csv."""
+    values = np.asarray(values, dtype=np.float32)
+    if values.ndim == 1:
+        values = values.reshape(1, -1)
+
+    moments = {
+        "mean": np.mean(values, axis=1),
+        "std": np.std(values, axis=1),
+        "skew": stats.skew(values, axis=1),
+        "kurtosis": stats.kurtosis(values, axis=1),
+        "median": np.median(values, axis=1),
+        "min": np.min(values, axis=1),
+        "max": np.max(values, axis=1),
+    }
+
+    out: dict[str, float] = {}
+    size = values.shape[0]
+    for moment_name, arr in moments.items():
+        for i in range(size):
+            out[f"{name}_{moment_name}_{i+1:02d}"] = float(arr[i])
+    return out
+
+
+def extract_features_basic(
     audio_path: Path,
     sample_rate: int = SAMPLE_RATE,
     duration: Optional[float] = AUDIO_DURATION_SECONDS,
     n_mfcc: int = 20,
 ) -> dict[str, float]:
     """
-    Extract a fixed-size feature vector from an audio file.
-
-    Features:
-    - MFCCs (20): mean and std -> 40
-    - chroma_stft: mean and std
-    - spectral_centroid: mean and std
-    - spectral_rolloff: mean and std
-    - zero_crossing_rate: mean and std
-    - rms: mean and std
-    - tempo (BPM)
-    - spectral_bandwidth: mean and std
+    Basic extractor used in the original Path B.
     """
     y, sr = librosa.load(audio_path, sr=sample_rate, mono=True, duration=duration)
 
-    # Small guard to avoid failures on silent/corrupted decodes.
     if y is None or len(y) == 0:
         raise ValueError("Empty audio signal")
 
@@ -85,53 +102,127 @@ def extract_features(
 
     mfcc_mean, mfcc_std = _safe_stats(mfcc)
 
-    chroma_mean = float(np.mean(chroma))
-    chroma_std = float(np.std(chroma))
-    centroid_mean = float(np.mean(centroid))
-    centroid_std = float(np.std(centroid))
-    rolloff_mean = float(np.mean(rolloff))
-    rolloff_std = float(np.std(rolloff))
-    zcr_mean = float(np.mean(zcr))
-    zcr_std = float(np.std(zcr))
-    rms_mean = float(np.mean(rms))
-    rms_std = float(np.std(rms))
-    tempo_bpm = float(tempo[0]) if np.size(tempo) else 0.0
-    bandwidth_mean = float(np.mean(bandwidth))
-    bandwidth_std = float(np.std(bandwidth))
-
     values = []
     values.extend(mfcc_mean.tolist())
     values.extend(mfcc_std.tolist())
     values.extend(
         [
-            chroma_mean,
-            chroma_std,
-            centroid_mean,
-            centroid_std,
-            rolloff_mean,
-            rolloff_std,
-            zcr_mean,
-            zcr_std,
-            rms_mean,
-            rms_std,
-            tempo_bpm,
-            bandwidth_mean,
-            bandwidth_std,
+            float(np.mean(chroma)),
+            float(np.std(chroma)),
+            float(np.mean(centroid)),
+            float(np.std(centroid)),
+            float(np.mean(rolloff)),
+            float(np.std(rolloff)),
+            float(np.mean(zcr)),
+            float(np.std(zcr)),
+            float(np.mean(rms)),
+            float(np.std(rms)),
+            float(tempo[0]) if np.size(tempo) else 0.0,
+            float(np.mean(bandwidth)),
+            float(np.std(bandwidth)),
         ]
     )
 
-    if len(values) != len(FEATURE_COLUMNS):
+    if len(values) != len(FEATURE_COLUMNS_BASIC):
         raise RuntimeError(
-            f"Feature length mismatch: got {len(values)}, expected {len(FEATURE_COLUMNS)}"
+            f"Feature length mismatch: got {len(values)}, expected {len(FEATURE_COLUMNS_BASIC)}"
         )
 
-    return dict(zip(FEATURE_COLUMNS, values))
+    return dict(zip(FEATURE_COLUMNS_BASIC, values))
+
+
+def extract_features_fma_compatible(audio_path: Path) -> dict[str, float]:
+    """
+    Extract features compatible with FMA precomputed features.csv schema.
+    The implementation follows the public FMA extraction script (features.py).
+    """
+    y, sr = librosa.load(audio_path, sr=None, mono=True)
+    if y is None or len(y) == 0:
+        raise ValueError("Empty audio signal")
+
+    output: dict[str, float] = {}
+
+    zcr = librosa.feature.zero_crossing_rate(y, frame_length=2048, hop_length=512)
+    output.update(_feature_stats_to_flattened("zcr", zcr))
+
+    cqt = np.abs(
+        librosa.cqt(
+            y,
+            sr=sr,
+            hop_length=512,
+            bins_per_octave=12,
+            n_bins=7 * 12,
+            tuning=None,
+        )
+    )
+
+    chroma_cqt = librosa.feature.chroma_cqt(C=cqt, n_chroma=12, n_octaves=7)
+    output.update(_feature_stats_to_flattened("chroma_cqt", chroma_cqt))
+
+    chroma_cens = librosa.feature.chroma_cens(C=cqt, n_chroma=12, n_octaves=7)
+    output.update(_feature_stats_to_flattened("chroma_cens", chroma_cens))
+
+    tonnetz = librosa.feature.tonnetz(chroma=chroma_cens)
+    output.update(_feature_stats_to_flattened("tonnetz", tonnetz))
+
+    stft = np.abs(librosa.stft(y, n_fft=2048, hop_length=512))
+
+    chroma_stft = librosa.feature.chroma_stft(S=stft**2, n_chroma=12)
+    output.update(_feature_stats_to_flattened("chroma_stft", chroma_stft))
+
+    # rmse in the original script -> rms in modern librosa API
+    rmse = librosa.feature.rms(S=stft)
+    output.update(_feature_stats_to_flattened("rmse", rmse))
+
+    centroid = librosa.feature.spectral_centroid(S=stft)
+    output.update(_feature_stats_to_flattened("spectral_centroid", centroid))
+
+    bandwidth = librosa.feature.spectral_bandwidth(S=stft)
+    output.update(_feature_stats_to_flattened("spectral_bandwidth", bandwidth))
+
+    contrast = librosa.feature.spectral_contrast(S=stft, n_bands=6)
+    output.update(_feature_stats_to_flattened("spectral_contrast", contrast))
+
+    rolloff = librosa.feature.spectral_rolloff(S=stft)
+    output.update(_feature_stats_to_flattened("spectral_rolloff", rolloff))
+
+    mel = librosa.feature.melspectrogram(sr=sr, S=stft**2)
+    mfcc = librosa.feature.mfcc(S=librosa.power_to_db(mel), n_mfcc=20)
+    output.update(_feature_stats_to_flattened("mfcc", mfcc))
+
+    missing = [c for c in FEATURE_COLUMNS_FMA_COMPAT if c not in output]
+    if missing:
+        raise RuntimeError(f"Missing FMA-compatible features: {missing[:5]}...")
+
+    # Keep deterministic ordering for downstream consistency.
+    return {col: output[col] for col in FEATURE_COLUMNS_FMA_COMPAT}
+
+
+def extract_features(
+    audio_path: Path,
+    feature_mode: str = "basic",
+    sample_rate: int = SAMPLE_RATE,
+    duration: Optional[float] = AUDIO_DURATION_SECONDS,
+    n_mfcc: int = 20,
+) -> dict[str, float]:
+    """Unified extractor entrypoint."""
+    if feature_mode == "fma_compatible":
+        return extract_features_fma_compatible(audio_path)
+    if feature_mode == "basic":
+        return extract_features_basic(
+            audio_path=audio_path,
+            sample_rate=sample_rate,
+            duration=duration,
+            n_mfcc=n_mfcc,
+        )
+    raise ValueError("feature_mode must be one of: basic, fma_compatible")
 
 
 def build_feature_dataset(
     tracks_csv: Path = TRACKS_CSV,
     audio_root: Path = FMA_AUDIO_DIR,
     output_csv: Path = PROCESSED_FEATURES_CSV,
+    feature_mode: str = "basic",
 ) -> pd.DataFrame:
     """Extract features for all valid fma_small tracks with known genre."""
     tracks = load_tracks_metadata(tracks_csv)
@@ -148,7 +239,7 @@ def build_feature_dataset(
             continue
 
         try:
-            feature_dict = extract_features(audio_path)
+            feature_dict = extract_features(audio_path, feature_mode=feature_mode)
             feature_dict["track_id"] = int(track_id)
             feature_dict["genre_top"] = str(row[("track", "genre_top")])
             if ("set", "split") in filtered.columns:
@@ -159,12 +250,15 @@ def build_feature_dataset(
             logger.warning("Skipping track %s (%s): %s", track_id, audio_path, exc)
 
     if not rows:
-        raise RuntimeError("No features extracted. Check dataset paths and files.")
+        raise RuntimeError(
+            "No features extracted. Check dataset paths and files. "
+            f"Skipped missing={skipped_missing}, corrupted={skipped_corrupted}"
+        )
 
     df = pd.DataFrame(rows)
 
-    # Ensure deterministic column order.
-    ordered_cols = ["track_id"] + FEATURE_COLUMNS + ["genre_top"]
+    ordered_features = FEATURE_COLUMNS_BASIC if feature_mode == "basic" else FEATURE_COLUMNS_FMA_COMPAT
+    ordered_cols = ["track_id"] + ordered_features + ["genre_top"]
     if "split" in df.columns:
         ordered_cols.append("split")
     df = df[ordered_cols]
@@ -174,6 +268,7 @@ def build_feature_dataset(
     df.to_csv(output_csv, index=False)
 
     logger.info("Saved processed dataset: %s", output_csv)
+    logger.info("Feature mode: %s", feature_mode)
     logger.info("Total extracted: %d", len(df))
     logger.info("Skipped missing files: %d", skipped_missing)
     logger.info("Skipped corrupted files: %d", skipped_corrupted)
@@ -186,12 +281,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--tracks-csv", type=Path, default=TRACKS_CSV)
     parser.add_argument("--audio-root", type=Path, default=FMA_AUDIO_DIR)
     parser.add_argument("--output", type=Path, default=PROCESSED_FEATURES_CSV)
+    parser.add_argument(
+        "--feature-mode",
+        type=str,
+        default="basic",
+        choices=["basic", "fma_compatible"],
+        help="basic: lightweight custom features | fma_compatible: schema matching features.csv",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    build_feature_dataset(args.tracks_csv, args.audio_root, args.output)
+    build_feature_dataset(args.tracks_csv, args.audio_root, args.output, args.feature_mode)
 
 
 if __name__ == "__main__":

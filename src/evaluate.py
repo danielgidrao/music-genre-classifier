@@ -20,16 +20,31 @@ from sklearn.metrics import (
 )
 
 try:
-    from .config import BEST_MODEL_PATH, LABEL_ENCODER_PATH, PROCESSED_FEATURES_CSV, TRAIN_RESULTS_CSV, get_feature_columns
+    from .config import (
+        BEST_MODEL_PATH,
+        LABEL_ENCODER_PATH,
+        PATH_A_FEATURES_CSV,
+        PROCESSED_FEATURES_CSV,
+        TRAIN_RESULTS_CSV,
+        TRAINED_FEATURE_COLUMNS_PATH,
+    )
+    from .load_data import infer_tabular_feature_columns
 except ImportError:  # pragma: no cover
-    from config import BEST_MODEL_PATH, LABEL_ENCODER_PATH, PROCESSED_FEATURES_CSV, TRAIN_RESULTS_CSV, get_feature_columns
+    from config import (
+        BEST_MODEL_PATH,
+        LABEL_ENCODER_PATH,
+        PATH_A_FEATURES_CSV,
+        PROCESSED_FEATURES_CSV,
+        TRAIN_RESULTS_CSV,
+        TRAINED_FEATURE_COLUMNS_PATH,
+    )
+    from load_data import infer_tabular_feature_columns
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
 
-def split_for_evaluation(df: pd.DataFrame):
-    feature_cols = get_feature_columns()
+def split_for_evaluation(df: pd.DataFrame, feature_cols: list[str]):
     X = df[feature_cols].copy()
     y_text = df["genre_top"].astype(str).copy()
 
@@ -37,13 +52,20 @@ def split_for_evaluation(df: pd.DataFrame):
         test_mask = df["split"] == "test"
         return X.loc[test_mask], y_text.loc[test_mask], "official_test_split"
 
-    # Fallback: evaluate on full dataset if no explicit split is present.
     return X, y_text, "full_dataset_fallback"
+
+
+def resolve_features_csv(path_arg: Path | None) -> Path:
+    if path_arg and path_arg.exists():
+        return path_arg
+    if PATH_A_FEATURES_CSV.exists():
+        return PATH_A_FEATURES_CSV
+    return PROCESSED_FEATURES_CSV
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Evaluate best trained model")
-    parser.add_argument("--features-csv", type=Path, default=PROCESSED_FEATURES_CSV)
+    parser.add_argument("--features-csv", type=Path, default=PATH_A_FEATURES_CSV)
     parser.add_argument("--save-dir", type=Path, default=Path("data/processed"))
     return parser.parse_args()
 
@@ -51,18 +73,30 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
 
-    if not args.features_csv.exists():
-        raise FileNotFoundError(f"Processed file not found: {args.features_csv}")
+    features_csv = resolve_features_csv(args.features_csv)
+    if not features_csv.exists():
+        raise FileNotFoundError(
+            f"Processed file not found: {features_csv}. Build it first (metadata path or audio path)."
+        )
     if not BEST_MODEL_PATH.exists():
         raise FileNotFoundError(f"Model not found: {BEST_MODEL_PATH}")
     if not LABEL_ENCODER_PATH.exists():
         raise FileNotFoundError(f"Label encoder not found: {LABEL_ENCODER_PATH}")
 
-    df = pd.read_csv(args.features_csv)
+    df = pd.read_csv(features_csv)
     model = joblib.load(BEST_MODEL_PATH)
     label_encoder = joblib.load(LABEL_ENCODER_PATH)
 
-    X_eval, y_eval_text, eval_mode = split_for_evaluation(df)
+    if TRAINED_FEATURE_COLUMNS_PATH.exists():
+        feature_cols = joblib.load(TRAINED_FEATURE_COLUMNS_PATH)
+    else:
+        feature_cols = infer_tabular_feature_columns(df)
+
+    missing = [c for c in feature_cols if c not in df.columns]
+    if missing:
+        raise ValueError(f"Dataset is missing expected feature columns: {missing[:10]}")
+
+    X_eval, y_eval_text, eval_mode = split_for_evaluation(df, feature_cols)
     y_eval = label_encoder.transform(y_eval_text)
 
     y_pred = model.predict(X_eval)
@@ -75,6 +109,7 @@ def main() -> None:
     }
 
     print("Evaluation mode:", eval_mode)
+    print("Feature table:", features_csv)
     print("Metrics:")
     for k, v in metrics.items():
         print(f"  {k}: {v:.4f}")
@@ -88,13 +123,11 @@ def main() -> None:
     print("\nClassification report:\n")
     print(report)
 
-    # Save report
     args.save_dir.mkdir(parents=True, exist_ok=True)
     report_path = args.save_dir / "classification_report.txt"
     with open(report_path, "w", encoding="utf-8") as f:
         f.write(report)
 
-    # Confusion matrix plot
     cm = confusion_matrix(y_eval, y_pred)
     fig, ax = plt.subplots(figsize=(10, 8))
     disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=label_encoder.classes_)
@@ -104,7 +137,6 @@ def main() -> None:
     cm_path = args.save_dir / "confusion_matrix_best_model.png"
     fig.savefig(cm_path, dpi=150)
 
-    # Model comparison chart from training file
     if TRAIN_RESULTS_CSV.exists():
         results_df = pd.read_csv(TRAIN_RESULTS_CSV)
         metric_cols = ["accuracy", "precision_macro", "recall_macro", "f1_macro"]
@@ -125,9 +157,7 @@ def main() -> None:
         fig2.savefig(comparison_path, dpi=150)
         logger.info("Saved model comparison chart: %s", comparison_path)
 
-    # Random forest feature importance (if best model is RF pipeline)
     rf_path = args.save_dir / "random_forest_feature_importance.png"
-    model_name = model.__class__.__name__
     rf_estimator = None
 
     if hasattr(model, "named_steps") and "model" in model.named_steps:
@@ -138,8 +168,7 @@ def main() -> None:
 
     if rf_estimator is not None:
         importances = rf_estimator.feature_importances_
-        feature_names = get_feature_columns()
-        imp_df = pd.DataFrame({"feature": feature_names, "importance": importances}).sort_values(
+        imp_df = pd.DataFrame({"feature": feature_cols, "importance": importances}).sort_values(
             "importance", ascending=False
         )
         top_n = min(20, len(imp_df))

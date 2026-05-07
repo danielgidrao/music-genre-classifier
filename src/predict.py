@@ -44,6 +44,23 @@ def load_artifacts():
     return model, label_encoder, feature_columns, scaler
 
 
+def infer_feature_mode(feature_columns: list[str]) -> str:
+    """
+    Detect which extractor should be used for uploaded audio.
+
+    - metadata/fma precomputed schema uses names like mfcc_mean_01
+    - basic schema uses names like mfcc_1_mean
+    """
+    if any(col.endswith("_01") and "_mean_" in col for col in feature_columns):
+        return "fma_compatible"
+    return "basic"
+
+
+def extract_features_for_model(audio_path: Path, feature_columns: list[str]) -> dict[str, float]:
+    mode = infer_feature_mode(feature_columns)
+    return extract_features(audio_path, feature_mode=mode)
+
+
 def predict_genre(audio_path: str | Path) -> dict:
     """
     Predict genre for a single .mp3/.wav file.
@@ -55,7 +72,7 @@ def predict_genre(audio_path: str | Path) -> dict:
     }
     """
     model, label_encoder, feature_columns, _ = load_artifacts()
-    feature_dict = extract_features(Path(audio_path))
+    feature_dict = extract_features_for_model(Path(audio_path), feature_columns)
 
     X = pd.DataFrame([feature_dict])
     X = X[feature_columns]
@@ -76,6 +93,7 @@ def predict_genre(audio_path: str | Path) -> dict:
     return {
         "predicted_genre": predicted_genre,
         "probabilities": probas,
+        "feature_mode": infer_feature_mode(feature_columns),
     }
 
 
@@ -90,6 +108,7 @@ def main() -> None:
     result = predict_genre(args.audio_path)
 
     print("Predicted genre:", result["predicted_genre"])
+    print("Feature mode used:", result["feature_mode"])
     if result["probabilities"] is not None:
         print("\nProbabilities:")
         for genre, prob in result["probabilities"].items():

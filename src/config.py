@@ -30,6 +30,22 @@ SAMPLE_RATE = 22050
 AUDIO_DURATION_SECONDS = 30
 N_MFCC = 20
 
+# FMA precomputed feature schema (from mdeff/fma features.py)
+FMA_COMPAT_FEATURE_SIZES = {
+    "chroma_stft": 12,
+    "chroma_cqt": 12,
+    "chroma_cens": 12,
+    "tonnetz": 6,
+    "mfcc": 20,
+    "rmse": 1,
+    "zcr": 1,
+    "spectral_centroid": 1,
+    "spectral_bandwidth": 1,
+    "spectral_contrast": 7,
+    "spectral_rolloff": 1,
+}
+FMA_COMPAT_MOMENTS = ("mean", "std", "skew", "kurtosis", "median", "min", "max")
+
 
 def get_feature_columns() -> list[str]:
     """Return feature names in a deterministic order."""
@@ -60,4 +76,17 @@ def get_feature_columns() -> list[str]:
         ]
     )
 
+    return columns
+
+
+def get_fma_compatible_feature_columns() -> list[str]:
+    """
+    Return flattened columns compatible with fma_metadata/features.csv.
+    Example name: mfcc_mean_01
+    """
+    columns = []
+    for feature_name, size in FMA_COMPAT_FEATURE_SIZES.items():
+        for moment in FMA_COMPAT_MOMENTS:
+            for i in range(1, size + 1):
+                columns.append(f"{feature_name}_{moment}_{i:02d}")
     return columns

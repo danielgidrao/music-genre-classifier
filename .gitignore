@@ -19,6 +19,8 @@ data/processed/*.csv
 data/processed/*.json
 data/processed/*.png
 data/processed/*.txt
+data/raw/*
+!data/raw/.gitkeep
 
 # Frontend
 frontend/node_modules/

@@ -236,8 +236,8 @@ export default function App() {
         <p className="eyebrow">Aprendizado de Máquina I</p>
         <h1>Classificador de Gênero Musical</h1>
         <p>
-          Fluxo completo com FMA: upload de áudio, extração de features (Caminho B), predição supervisionada
-          e painéis para análise comparativa.
+          Fluxo completo com FMA: treino supervisionado com features pré-computadas (metadata), inferência em
+          MP3 novo com extração compatível e painéis para análise comparativa.
         </p>
       </header>
 
@@ -328,7 +328,7 @@ export default function App() {
           ) : null}
         </Section>
 
-        <Section title="Distribuição dos gêneros" subtitle="Base extraída do fma_small (Caminho B)">
+        <Section title="Distribuição dos gêneros" subtitle="Base de treino atual (Caminho A - metadata)">
           {loadingDashboard ? <p className="muted">Carregando...</p> : null}
           {genreDistribution.length > 0 ? (
             <HorizontalBars
@@ -399,14 +399,15 @@ export default function App() {
             <article>
               <h4>Caminho A (features pré-computadas)</h4>
               <p>
-                Útil para EDA rápida e baseline. Pode alimentar análises comparativas sem custo de extração de áudio.
+                É o caminho principal do treino atual, com features prontas do `features.csv`, rápido e estável para
+                modelagem.
               </p>
             </article>
             <article>
-              <h4>Caminho B (librosa do áudio bruto)</h4>
+              <h4>Caminho B (extração no upload)</h4>
               <p>
-                É o caminho usado na predição de upload. O frontend mostra como as features do arquivo enviado se
-                alinham com o gênero previsto.
+                O áudio enviado é transformado em features compatíveis com o esquema do modelo treinado, permitindo
+                testar MP3 novo no mesmo classificador.
               </p>
             </article>
           </div>

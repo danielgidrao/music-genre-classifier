@@ -112,3 +112,13 @@ def build_path_a_dataframe(
         logger.info("Saved Path A dataframe to %s", output_path)
 
     return merged
+
+
+def infer_tabular_feature_columns(df: pd.DataFrame) -> list[str]:
+    """
+    Infer model feature columns from a tabular dataset.
+    Excludes id/label/split administrative columns and keeps numeric columns only.
+    """
+    excluded = {"track_id", "genre_top", "split"}
+    numeric_cols = df.select_dtypes(include=["number"]).columns.tolist()
+    return [col for col in numeric_cols if col not in excluded]

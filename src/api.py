@@ -20,23 +20,25 @@ try:
         BEST_MODEL_PATH,
         BEST_MODEL_RESULTS_JSON,
         LABEL_ENCODER_PATH,
+        PATH_A_FEATURES_CSV,
         PROCESSED_FEATURES_CSV,
         TRAIN_RESULTS_CSV,
         TRAINED_FEATURE_COLUMNS_PATH,
-        get_feature_columns,
     )
-    from .extract_features import extract_features
+    from .load_data import infer_tabular_feature_columns
+    from .predict import extract_features_for_model, infer_feature_mode
 except ImportError:  # pragma: no cover
     from config import (
         BEST_MODEL_PATH,
         BEST_MODEL_RESULTS_JSON,
         LABEL_ENCODER_PATH,
+        PATH_A_FEATURES_CSV,
         PROCESSED_FEATURES_CSV,
         TRAIN_RESULTS_CSV,
         TRAINED_FEATURE_COLUMNS_PATH,
-        get_feature_columns,
     )
-    from extract_features import extract_features
+    from load_data import infer_tabular_feature_columns
+    from predict import extract_features_for_model, infer_feature_mode
 
 
 class PredictResponse(BaseModel):
@@ -52,7 +54,7 @@ class PredictResponse(BaseModel):
 app = FastAPI(
     title="Music Genre Classifier API",
     description="Backend para classificação supervisionada de gêneros musicais (FMA)",
-    version="1.0.0",
+    version="1.1.0",
 )
 
 app.add_middleware(
@@ -63,8 +65,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+def _resolve_processed_dataset_path() -> Path | None:
+    if PATH_A_FEATURES_CSV.exists():
+        return PATH_A_FEATURES_CSV
+    if PROCESSED_FEATURES_CSV.exists():
+        return PROCESSED_FEATURES_CSV
+    return None
+
+
 # Serve generated report images if they exist.
-processed_dir = PROCESSED_FEATURES_CSV.parent
+processed_path = _resolve_processed_dataset_path()
+processed_dir = processed_path.parent if processed_path is not None else PROCESSED_FEATURES_CSV.parent
 if processed_dir.exists():
     app.mount("/assets", StaticFiles(directory=str(processed_dir)), name="assets")
 
@@ -86,9 +98,18 @@ def _load_artifacts() -> None:
 
 
 def _get_processed_dataframe() -> pd.DataFrame | None:
-    if not PROCESSED_FEATURES_CSV.exists():
+    path = _resolve_processed_dataset_path()
+    if path is None:
         return None
-    return pd.read_csv(PROCESSED_FEATURES_CSV)
+    return pd.read_csv(path)
+
+
+def _get_feature_columns(df: pd.DataFrame | None = None) -> list[str]:
+    if "feature_columns" in _ARTIFACTS:
+        return list(_ARTIFACTS["feature_columns"])
+    if df is not None:
+        return infer_tabular_feature_columns(df)
+    return []
 
 
 def _serialize_probabilities(model, X: pd.DataFrame, label_encoder) -> list[dict[str, float | str]]:
@@ -112,11 +133,11 @@ def _top_feature_comparison(feature_dict: dict[str, float], predicted_genre: str
     if df is None or "genre_top" not in df.columns:
         return []
 
-    feature_cols = [col for col in get_feature_columns() if col in df.columns]
+    feature_cols = [col for col in _get_feature_columns(df) if col in df.columns and col in feature_dict]
     if not feature_cols:
         return []
 
-    representative = [
+    preferred = [
         "tempo_bpm",
         "rms_mean",
         "chroma_mean",
@@ -125,10 +146,28 @@ def _top_feature_comparison(feature_dict: dict[str, float], predicted_genre: str
         "zero_crossing_rate_mean",
         "mfcc_1_mean",
         "mfcc_2_mean",
+        "rmse_mean_01",
+        "zcr_mean_01",
+        "spectral_centroid_mean_01",
+        "spectral_bandwidth_mean_01",
+        "spectral_rolloff_mean_01",
+        "mfcc_mean_01",
+        "mfcc_mean_02",
     ]
-    representative = [feat for feat in representative if feat in feature_dict and feat in feature_cols]
+    representative = [feat for feat in preferred if feat in feature_cols]
 
     global_means = df[feature_cols].mean(numeric_only=True)
+    global_stds = df[feature_cols].std(numeric_only=True).replace(0, np.nan)
+
+    if not representative:
+        # Fallback: select most distinctive features for this uploaded sample.
+        zscores = {
+            feat: abs((feature_dict[feat] - global_means[feat]) / global_stds[feat])
+            for feat in feature_cols
+            if pd.notna(global_stds[feat])
+        }
+        representative = [feat for feat, _ in sorted(zscores.items(), key=lambda item: item[1], reverse=True)[:10]]
+
     genre_slice = df[df["genre_top"] == predicted_genre]
     if genre_slice.empty:
         return []
@@ -155,9 +194,7 @@ def _best_model_metrics() -> dict[str, Any]:
     return {}
 
 
-def _evaluation_split(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series, str]:
-    feature_cols = get_feature_columns()
-    feature_cols = [c for c in feature_cols if c in df.columns]
+def _evaluation_split(df: pd.DataFrame, feature_cols: list[str]) -> tuple[pd.DataFrame, pd.Series, str]:
     X = df[feature_cols].copy()
     y = df["genre_top"].astype(str).copy()
 
@@ -179,7 +216,6 @@ def _startup() -> None:
     try:
         _load_artifacts()
     except FileNotFoundError:
-        # API can start even before training artifacts exist.
         pass
 
 
@@ -188,7 +224,7 @@ def health() -> dict[str, Any]:
     return {
         "status": "ok",
         "artifacts_ready": all(path.exists() for path in [BEST_MODEL_PATH, LABEL_ENCODER_PATH, TRAINED_FEATURE_COLUMNS_PATH]),
-        "processed_dataset_ready": PROCESSED_FEATURES_CSV.exists(),
+        "processed_dataset_ready": _resolve_processed_dataset_path() is not None,
     }
 
 
@@ -202,11 +238,14 @@ def model_info() -> dict[str, Any]:
 
     model = _ARTIFACTS["model"]
     label_encoder = _ARTIFACTS["label_encoder"]
+    feature_columns = _ARTIFACTS["feature_columns"]
 
     return {
         "model_name": _model_name(model),
         "classes": list(label_encoder.classes_),
         "n_classes": int(len(label_encoder.classes_)),
+        "n_features": int(len(feature_columns)),
+        "feature_mode": infer_feature_mode(feature_columns),
         "metrics_summary": _best_model_metrics(),
     }
 
@@ -215,7 +254,7 @@ def model_info() -> dict[str, Any]:
 def genre_distribution() -> dict[str, Any]:
     df = _get_processed_dataframe()
     if df is None:
-        raise HTTPException(status_code=400, detail=f"Processed dataset not found: {PROCESSED_FEATURES_CSV}")
+        raise HTTPException(status_code=400, detail="Processed dataset not found.")
 
     counts = (
         df["genre_top"]
@@ -260,12 +299,15 @@ def confusion_matrix_chart() -> dict[str, Any]:
 
     df = _get_processed_dataframe()
     if df is None:
-        raise HTTPException(status_code=400, detail=f"Processed dataset not found: {PROCESSED_FEATURES_CSV}")
+        raise HTTPException(status_code=400, detail="Processed dataset not found.")
 
     model = _ARTIFACTS["model"]
     label_encoder = _ARTIFACTS["label_encoder"]
+    feature_cols = [c for c in _get_feature_columns(df) if c in df.columns]
+    if not feature_cols:
+        raise HTTPException(status_code=400, detail="No usable feature columns for confusion matrix.")
 
-    X_eval, y_eval_text, split_mode = _evaluation_split(df)
+    X_eval, y_eval_text, split_mode = _evaluation_split(df, feature_cols)
     y_eval = label_encoder.transform(y_eval_text)
     y_pred = model.predict(X_eval)
 
@@ -323,9 +365,9 @@ def feature_importance() -> dict[str, Any]:
 def pca_projection(max_points: int = 1200) -> dict[str, Any]:
     df = _get_processed_dataframe()
     if df is None:
-        raise HTTPException(status_code=400, detail=f"Processed dataset not found: {PROCESSED_FEATURES_CSV}")
+        raise HTTPException(status_code=400, detail="Processed dataset not found.")
 
-    feature_cols = [col for col in get_feature_columns() if col in df.columns]
+    feature_cols = [col for col in infer_tabular_feature_columns(df) if col in df.columns]
     if not feature_cols:
         raise HTTPException(status_code=400, detail="Feature columns not found in processed dataset.")
 
@@ -372,8 +414,12 @@ async def predict(file: UploadFile = File(...)) -> PredictResponse:
         tmp.write(raw)
         tmp_path = Path(tmp.name)
 
+    model = _ARTIFACTS["model"]
+    label_encoder = _ARTIFACTS["label_encoder"]
+    feature_columns = _ARTIFACTS["feature_columns"]
+
     try:
-        feature_dict = extract_features(tmp_path)
+        feature_dict = extract_features_for_model(tmp_path, feature_columns)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Feature extraction failed: {exc}") from exc
     finally:
@@ -382,31 +428,28 @@ async def predict(file: UploadFile = File(...)) -> PredictResponse:
         except OSError:
             pass
 
-    model = _ARTIFACTS["model"]
-    label_encoder = _ARTIFACTS["label_encoder"]
-    feature_columns = _ARTIFACTS["feature_columns"]
-
     X = pd.DataFrame([feature_dict])[feature_columns]
     pred_encoded = int(model.predict(X)[0])
     predicted_genre = str(label_encoder.inverse_transform([pred_encoded])[0])
 
     probabilities = _serialize_probabilities(model, X, label_encoder)
 
-    # Show top varying features for readability in frontend.
     global_df = _get_processed_dataframe()
+    mode = infer_feature_mode(feature_columns)
     notes = [
-        "Predição baseada no Caminho B (features extraídas diretamente do áudio com librosa).",
-        "As mesmas features usadas no treino foram usadas para este upload.",
+        f"Predição usando extrator: {mode}.",
+        "O vetor de features do upload foi alinhado com o esquema salvo no treino.",
     ]
+
     if global_df is None:
-        extracted_for_return = {k: float(v) for k, v in feature_dict.items()}
+        extracted_for_return = {k: float(v) for k, v in list(feature_dict.items())[:12]}
     else:
-        feature_cols = [col for col in get_feature_columns() if col in global_df.columns]
-        means = global_df[feature_cols].mean(numeric_only=True)
-        stds = global_df[feature_cols].std(numeric_only=True).replace(0, np.nan)
+        usable = [c for c in _get_feature_columns(global_df) if c in global_df.columns and c in feature_dict]
+        means = global_df[usable].mean(numeric_only=True)
+        stds = global_df[usable].std(numeric_only=True).replace(0, np.nan)
         zscores = {}
-        for feat in feature_cols:
-            if feat in feature_dict and pd.notna(stds[feat]):
+        for feat in usable:
+            if pd.notna(stds[feat]):
                 zscores[feat] = abs((feature_dict[feat] - means[feat]) / stds[feat])
 
         top_feats = sorted(zscores.items(), key=lambda item: item[1], reverse=True)[:12]

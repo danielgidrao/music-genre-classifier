@@ -21,23 +21,39 @@ try:
     from .config import (
         BEST_MODEL_PATH,
         BEST_MODEL_RESULTS_JSON,
+        FEATURES_CSV,
         LABEL_ENCODER_PATH,
+        PATH_A_FEATURES_CSV,
         PROCESSED_FEATURES_CSV,
         SCALER_PATH,
+        TRACKS_CSV,
         TRAINED_FEATURE_COLUMNS_PATH,
         TRAIN_RESULTS_CSV,
-        get_feature_columns,
+    )
+    from .load_data import (
+        build_path_a_dataframe,
+        infer_tabular_feature_columns,
+        load_precomputed_features,
+        load_tracks_metadata,
     )
 except ImportError:  # pragma: no cover
     from config import (
         BEST_MODEL_PATH,
         BEST_MODEL_RESULTS_JSON,
+        FEATURES_CSV,
         LABEL_ENCODER_PATH,
+        PATH_A_FEATURES_CSV,
         PROCESSED_FEATURES_CSV,
         SCALER_PATH,
+        TRACKS_CSV,
         TRAINED_FEATURE_COLUMNS_PATH,
         TRAIN_RESULTS_CSV,
-        get_feature_columns,
+    )
+    from load_data import (
+        build_path_a_dataframe,
+        infer_tabular_feature_columns,
+        load_precomputed_features,
+        load_tracks_metadata,
     )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -47,17 +63,37 @@ logger = logging.getLogger(__name__)
 RANDOM_STATE = 42
 
 
-def load_training_data(path: Path = PROCESSED_FEATURES_CSV) -> pd.DataFrame:
+def load_training_data(path: Path) -> pd.DataFrame:
     if not path.exists():
         raise FileNotFoundError(f"Processed feature file not found: {path}")
     return pd.read_csv(path)
 
 
-def split_data(df: pd.DataFrame):
-    feature_cols = get_feature_columns()
+def build_training_dataframe_from_metadata(output_path: Path = PATH_A_FEATURES_CSV) -> pd.DataFrame:
+    tracks = load_tracks_metadata(TRACKS_CSV)
+    features = load_precomputed_features(FEATURES_CSV)
+    return build_path_a_dataframe(tracks, features, output_path=output_path)
+
+
+def prepare_training_dataframe(training_source: str, features_csv: Path) -> tuple[pd.DataFrame, str]:
+    if features_csv.exists():
+        return load_training_data(features_csv), str(features_csv)
+
+    if training_source == "metadata":
+        logger.info("Input dataset not found. Building training dataframe from metadata (features.csv + tracks.csv)...")
+        df = build_training_dataframe_from_metadata(features_csv)
+        return df, str(features_csv)
+
+    raise FileNotFoundError(
+        f"Training source '{training_source}' selected, but file not found: {features_csv}. "
+        "If you want metadata-based training, use --training-source metadata."
+    )
+
+
+def split_data(df: pd.DataFrame, feature_cols: list[str]):
     missing_cols = [c for c in feature_cols if c not in df.columns]
     if missing_cols:
-        raise ValueError(f"Missing feature columns: {missing_cols}")
+        raise ValueError(f"Missing feature columns: {missing_cols[:10]}")
 
     X = df[feature_cols].copy()
     y_text = df["genre_top"].astype(str).copy()
@@ -82,7 +118,6 @@ def split_data(df: pd.DataFrame):
         y_val = y[val_mask.values]
         X_test = X.loc[test_mask]
         y_test = y[test_mask.values]
-
         split_name = "official_fma_split"
     else:
         X_train_full, X_test, y_train_full, y_test = train_test_split(
@@ -198,16 +233,35 @@ def build_models_and_grids(feature_cols: list[str]):
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train supervised models for FMA genre classification")
-    parser.add_argument("--features-csv", type=Path, default=PROCESSED_FEATURES_CSV)
+    parser.add_argument(
+        "--training-source",
+        type=str,
+        default="metadata",
+        choices=["metadata", "audio"],
+        help="metadata: uses fma_metadata/features.csv; audio: expects a prebuilt CSV from audio extraction.",
+    )
+    parser.add_argument(
+        "--features-csv",
+        type=Path,
+        default=PATH_A_FEATURES_CSV,
+        help="Input tabular CSV used for training. If missing and training-source=metadata, it is built automatically.",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
 
-    df = load_training_data(args.features_csv)
-    X_train, y_train, X_val, y_val, X_test, y_test, label_encoder, split_name = split_data(df)
-    feature_cols = get_feature_columns()
+    if args.training_source == "audio" and args.features_csv == PATH_A_FEATURES_CSV:
+        args.features_csv = PROCESSED_FEATURES_CSV
+
+    df, source_used = prepare_training_dataframe(args.training_source, args.features_csv)
+    feature_cols = infer_tabular_feature_columns(df)
+
+    if not feature_cols:
+        raise RuntimeError("No numeric feature columns found for training.")
+
+    X_train, y_train, X_val, y_val, X_test, y_test, label_encoder, split_name = split_data(df, feature_cols)
 
     logger.info(
         "Split strategy: %s | train=%d, val=%d, test=%d",
@@ -216,6 +270,9 @@ def main() -> None:
         len(X_val),
         len(X_test),
     )
+    logger.info("Training source: %s", args.training_source)
+    logger.info("Feature table: %s", source_used)
+    logger.info("Number of feature columns: %d", len(feature_cols))
 
     models_and_grids = build_models_and_grids(feature_cols)
 
@@ -240,13 +297,12 @@ def main() -> None:
     best_model_name = best_row["model"]
     best_model = trained_models[best_model_name]
 
-    # Save artifacts
     BEST_MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
     joblib.dump(best_model, BEST_MODEL_PATH)
     joblib.dump(label_encoder, LABEL_ENCODER_PATH)
     joblib.dump(feature_cols, TRAINED_FEATURE_COLUMNS_PATH)
 
-    # Save scaler separately as requested.
+    # Saved to satisfy project requirement even if the best pipeline already scales internally.
     scaler = StandardScaler().fit(X_train)
     joblib.dump(scaler, SCALER_PATH)
 
@@ -258,6 +314,9 @@ def main() -> None:
             {
                 "best_model": best_model_name,
                 "split_strategy": split_name,
+                "training_source": args.training_source,
+                "feature_table": source_used,
+                "n_features": len(feature_cols),
                 "metrics": {
                     "accuracy": float(best_row["accuracy"]),
                     "precision_macro": float(best_row["precision_macro"]),

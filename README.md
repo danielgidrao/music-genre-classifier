@@ -49,21 +49,26 @@ Acessos:
 
 ### Pipeline de ML via container
 
-Rode os comandos abaixo no container `api`:
+Fluxo recomendado (treino com metadata pronto):
 
 ```bash
-docker compose run --rm api python src/extract_features.py
-docker compose run --rm api python src/train.py
+docker compose run --rm api python src/train.py --training-source metadata
 docker compose run --rm api python src/evaluate.py
 docker compose run --rm api python src/predict.py caminho/para/musica.mp3
+```
+
+Se quiser gerar features diretamente dos áudios (`fma_small`) por comparação:
+
+```bash
+docker compose run --rm api python src/extract_features.py --feature-mode basic
+docker compose run --rm api python src/extract_features.py --feature-mode fma_compatible
 ```
 
 ## 3) Rodar local sem Docker (opcional)
 
 ```bash
 pip install -r requirements.txt
-python src/extract_features.py
-python src/train.py
+python src/train.py --training-source metadata
 python src/evaluate.py
 python src/predict.py caminho/para/musica.mp3
 uvicorn src.api:app --reload
@@ -72,23 +77,14 @@ cd frontend && npm install && npm run dev
 
 ## 4) Features e abordagens
 
-### Caminho B (principal para upload)
-Features extraídas com `librosa`:
-- MFCC (20, média e desvio)
-- chroma_stft (média e desvio)
-- spectral_centroid (média e desvio)
-- spectral_rolloff (média e desvio)
-- zero_crossing_rate (média e desvio)
-- rms (média e desvio)
-- tempo BPM
-- spectral_bandwidth (média e desvio)
-
-Saída:
-- `data/processed/fma_features_clean.csv`
-
-### Caminho A (exploratório)
+### Caminho A (principal no treino atual)
 - Usa `features.csv` pré-computado + `tracks.csv`
-- Apoio para EDA/notebook
+- Gera tabela em `data/processed/fma_precomputed_features.csv`
+- Não depende do `fma_small` para treinar
+
+### Caminho B (opcional para comparação)
+- Extração via `librosa` diretamente do áudio
+- Mantido como alternativa/experimento
 
 ## 5) Treino e artefatos
 
@@ -100,6 +96,10 @@ Treino com `GridSearchCV` para:
 Split:
 - usa split oficial do FMA (`training`, `validation`, `test`) quando disponível
 - fallback para split estratificado
+
+Observação importante:
+- O modelo continua aceitando MP3 novo.
+- Na predição, o projeto escolhe automaticamente o extrator compatível com as colunas usadas no treino.
 
 Artefatos gerados:
 - `models/best_model.pkl`
