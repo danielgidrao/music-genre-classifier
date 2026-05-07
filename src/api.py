@@ -13,6 +13,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sklearn.decomposition import PCA
+from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
+from sklearn.manifold import TSNE
 from sklearn.metrics import confusion_matrix
 
 try:
@@ -256,12 +258,12 @@ def genre_distribution() -> dict[str, Any]:
     if df is None:
         raise HTTPException(status_code=400, detail="Processed dataset not found.")
 
-    counts = (
-        df["genre_top"]
-        .value_counts()
-        .sort_values(ascending=False)
-        .reset_index()
-        .rename(columns={"index": "genre", "genre_top": "count"})
+    counts_series = df["genre_top"].value_counts().sort_values(ascending=False)
+    counts = pd.DataFrame(
+        {
+            "genre": counts_series.index.astype(str),
+            "count": counts_series.values.astype(int),
+        }
     )
 
     return {
@@ -392,6 +394,92 @@ def pca_projection(max_points: int = 1200) -> dict[str, Any]:
     return {
         "chart": "pca_2d",
         "explained_variance_ratio": [float(v) for v in pca.explained_variance_ratio_],
+        "data": payload,
+    }
+
+
+@app.get("/api/charts/tsne")
+def tsne_projection(max_points: int = 1000, perplexity: float = 30.0) -> dict[str, Any]:
+    df = _get_processed_dataframe()
+    if df is None:
+        raise HTTPException(status_code=400, detail="Processed dataset not found.")
+
+    feature_cols = [col for col in infer_tabular_feature_columns(df) if col in df.columns]
+    if not feature_cols:
+        raise HTTPException(status_code=400, detail="Feature columns not found in processed dataset.")
+
+    sample_df = df.copy()
+    if len(sample_df) > max_points:
+        sample_df = sample_df.sample(n=max_points, random_state=42)
+
+    if len(sample_df) < 10:
+        raise HTTPException(status_code=400, detail="Not enough points for t-SNE projection.")
+
+    X = sample_df[feature_cols].values
+    pca = PCA(n_components=min(50, X.shape[1]), random_state=42)
+    X_reduced = pca.fit_transform(X)
+
+    safe_perplexity = max(5.0, min(perplexity, float(len(sample_df) - 1)))
+    tsne = TSNE(
+        n_components=2,
+        perplexity=safe_perplexity,
+        init="pca",
+        learning_rate="auto",
+        random_state=42,
+    )
+    embedding = tsne.fit_transform(X_reduced)
+
+    payload = []
+    for idx, (_, row) in enumerate(sample_df.iterrows()):
+        payload.append(
+            {
+                "x": float(embedding[idx, 0]),
+                "y": float(embedding[idx, 1]),
+                "genre": str(row["genre_top"]),
+            }
+        )
+
+    return {
+        "chart": "tsne_2d",
+        "n_points": int(len(payload)),
+        "perplexity": float(safe_perplexity),
+        "data": payload,
+    }
+
+
+@app.get("/api/charts/lda")
+def lda_projection(max_points: int = 1200) -> dict[str, Any]:
+    df = _get_processed_dataframe()
+    if df is None:
+        raise HTTPException(status_code=400, detail="Processed dataset not found.")
+
+    feature_cols = [col for col in infer_tabular_feature_columns(df) if col in df.columns]
+    if not feature_cols:
+        raise HTTPException(status_code=400, detail="Feature columns not found in processed dataset.")
+
+    sample_df = df.copy()
+    if len(sample_df) > max_points:
+        sample_df = sample_df.sample(n=max_points, random_state=42)
+
+    X = sample_df[feature_cols].values
+    y = sample_df["genre_top"].astype(str).values
+
+    lda = LinearDiscriminantAnalysis(n_components=2)
+    embedding = lda.fit_transform(X, y)
+
+    payload = []
+    for idx, (_, row) in enumerate(sample_df.iterrows()):
+        payload.append(
+            {
+                "x": float(embedding[idx, 0]),
+                "y": float(embedding[idx, 1]),
+                "genre": str(row["genre_top"]),
+            }
+        )
+
+    return {
+        "chart": "lda_2d",
+        "n_points": int(len(payload)),
         "data": payload,
     }
 

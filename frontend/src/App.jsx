@@ -35,6 +35,7 @@ function Section({ title, subtitle, children }) {
 
 function HorizontalBars({ items, labelKey, valueKey, highlightLabel }) {
   const max = Math.max(...items.map((i) => Number(i[valueKey] || 0)), 1e-9);
+  const total = items.reduce((acc, cur) => acc + Number(cur[valueKey] || 0), 0);
   return (
     <div className="bars-wrap">
       {items.map((item) => {
@@ -42,13 +43,14 @@ function HorizontalBars({ items, labelKey, valueKey, highlightLabel }) {
         const value = Number(item[valueKey] || 0);
         const width = `${(value / max) * 100}%`;
         const highlighted = highlightLabel && label === highlightLabel;
+        const pct = total > 0 ? (value / total) * 100 : 0;
         return (
           <div className={`bar-row ${highlighted ? 'highlighted' : ''}`} key={label}>
             <span className="bar-label">{label}</span>
             <div className="bar-track">
               <div className="bar-fill" style={{ width }} />
             </div>
-            <span className="bar-value">{fmt(value, value > 1 ? 2 : 4)}</span>
+            <span className="bar-value">{fmt(value, value > 1 ? 0 : 4)} ({fmt(pct, 1)}%)</span>
           </div>
         );
       })}
@@ -91,29 +93,30 @@ function ConfusionHeatmap({ labels, matrix }) {
           ))}
         </tbody>
       </table>
+      <p className="muted">Generos: {labels.map((label, idx) => `${idx + 1}. ${label}`).join(' | ')}</p>
     </div>
   );
 }
 
-function PcaScatter({ data }) {
-  const points = useMemo(() => {
-    if (!Array.isArray(data) || data.length === 0) return [];
+function EmbeddingScatter({ data, xKey = 'x', yKey = 'y', title = 'Embedding 2D' }) {
+  const { points, genres } = useMemo(() => {
+    if (!Array.isArray(data) || data.length === 0) return { points: [], genres: [] };
     const sample = data.length > 500 ? data.slice(0, 500) : data;
 
-    const xs = sample.map((p) => p.pc1);
-    const ys = sample.map((p) => p.pc2);
+    const xs = sample.map((p) => Number(p[xKey]));
+    const ys = sample.map((p) => Number(p[yKey]));
     const minX = Math.min(...xs);
     const maxX = Math.max(...xs);
     const minY = Math.min(...ys);
     const maxY = Math.max(...ys);
 
     const genreList = [...new Set(sample.map((p) => p.genre))];
-    const palette = ['#1b4332', '#2d6a4f', '#40916c', '#52b788', '#74c69d', '#95d5b2', '#388e5f', '#276749'];
+    const palette = ['#e63946', '#ff7f11', '#ffbe0b', '#2a9d8f', '#3a86ff', '#8338ec', '#f72585', '#4361ee'];
     const colorByGenre = Object.fromEntries(genreList.map((g, idx) => [g, palette[idx % palette.length]]));
 
-    return sample.map((p, idx) => {
-      const x = ((p.pc1 - minX) / (maxX - minX || 1)) * 760 + 20;
-      const y = 300 - ((p.pc2 - minY) / (maxY - minY || 1)) * 260 + 20;
+    const mapped = sample.map((p, idx) => {
+      const x = ((Number(p[xKey]) - minX) / (maxX - minX || 1)) * 760 + 20;
+      const y = 300 - ((Number(p[yKey]) - minY) / (maxY - minY || 1)) * 260 + 20;
       return {
         id: `${p.genre}-${idx}`,
         x,
@@ -122,21 +125,31 @@ function PcaScatter({ data }) {
         color: colorByGenre[p.genre]
       };
     });
-  }, [data]);
+
+    return { points: mapped, genres: genreList.map((genre) => ({ genre, color: colorByGenre[genre] })) };
+  }, [data, xKey, yKey]);
 
   if (points.length === 0) {
-    return <p className="muted">PCA indisponível no momento.</p>;
+    return <p className="muted">Visualizacao indisponivel no momento.</p>;
   }
 
   return (
     <div className="pca-scatter">
-      <svg viewBox="0 0 800 340" role="img" aria-label="PCA 2D">
+      <svg viewBox="0 0 800 340" role="img" aria-label={title}>
         <rect x="0" y="0" width="800" height="340" fill="rgba(255,255,255,0.5)" rx="8" />
         {points.map((pt) => (
-          <circle key={pt.id} cx={pt.x} cy={pt.y} r="3.3" fill={pt.color} opacity="0.72" />
+          <circle key={pt.id} cx={pt.x} cy={pt.y} r="4.2" fill={pt.color} opacity="0.84" stroke="#133022" strokeWidth="0.45" />
         ))}
       </svg>
-      <p className="muted">Cada ponto é uma faixa do dataset (amostra). Cores representam gêneros.</p>
+      <div className="genre-legend">
+        {genres.map((item) => (
+          <span key={item.genre} className="legend-item">
+            <i className="legend-dot" style={{ backgroundColor: item.color }} />
+            {item.genre}
+          </span>
+        ))}
+      </div>
+      <p className="muted">Cada ponto e uma faixa. Cores diferentes representam os generos.</p>
     </div>
   );
 }
@@ -150,7 +163,7 @@ export default function App() {
   const [modelComparison, setModelComparison] = useState([]);
   const [confusionData, setConfusionData] = useState(null);
   const [featureImportance, setFeatureImportance] = useState(null);
-  const [pcaData, setPcaData] = useState(null);
+  const [embeddingData, setEmbeddingData] = useState(null);
 
   const [selectedFile, setSelectedFile] = useState(null);
   const [predicting, setPredicting] = useState(false);
@@ -165,13 +178,13 @@ export default function App() {
       setDashboardError('');
 
       try {
-        const [infoRes, distRes, compareRes, cmRes, importanceRes, pcaRes] = await Promise.allSettled([
+        const [infoRes, distRes, compareRes, cmRes, importanceRes, ldaRes] = await Promise.allSettled([
           fetchJson('/api/model-info'),
           fetchJson('/api/charts/genre-distribution'),
           fetchJson('/api/charts/model-comparison'),
           fetchJson('/api/charts/confusion-matrix'),
           fetchJson('/api/charts/feature-importance'),
-          fetchJson('/api/charts/pca')
+          fetchJson('/api/charts/lda')
         ]);
 
         if (!mounted) return;
@@ -181,9 +194,9 @@ export default function App() {
         if (compareRes.status === 'fulfilled') setModelComparison(compareRes.value.data || []);
         if (cmRes.status === 'fulfilled') setConfusionData(cmRes.value);
         if (importanceRes.status === 'fulfilled') setFeatureImportance(importanceRes.value);
-        if (pcaRes.status === 'fulfilled') setPcaData(pcaRes.value);
+        if (ldaRes.status === 'fulfilled') setEmbeddingData(ldaRes.value);
 
-        const errors = [infoRes, distRes, compareRes, cmRes, importanceRes, pcaRes]
+        const errors = [infoRes, distRes, compareRes, cmRes, importanceRes]
           .filter((res) => res.status === 'rejected')
           .map((res) => res.reason?.message || 'Erro desconhecido');
 
@@ -229,23 +242,16 @@ export default function App() {
   }
 
   const predictedGenre = prediction?.predicted_genre;
-
   return (
     <div className="page">
       <header className="hero">
-        <p className="eyebrow">Aprendizado de Máquina I</p>
-        <h1>Classificador de Gênero Musical</h1>
-        <p>
-          Fluxo completo com FMA: treino supervisionado com features pré-computadas (metadata), inferência em
-          MP3 novo com extração compatível e painéis para análise comparativa.
-        </p>
+        <p className="eyebrow">Aprendizado de Maquina I</p>
+        <h1>Classificador de Genero Musical</h1>
+        <p>Fluxo completo com FMA para treino supervisionado, inferencia em MP3 novo e paineis de analise.</p>
       </header>
 
       <main className="grid">
-        <Section
-          title="Upload e predição"
-          subtitle="Envie um .mp3 ou .wav para o backend FastAPI extrair atributos e prever o gênero"
-        >
+        <Section title="Upload e predicao" subtitle="Envie um .mp3 ou .wav para prever o genero">
           <form className="upload-form" onSubmit={onPredict}>
             <input
               type="file"
@@ -253,7 +259,7 @@ export default function App() {
               onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
             />
             <button type="submit" disabled={!selectedFile || predicting}>
-              {predicting ? 'Prevendo...' : 'Prever gênero'}
+              {predicting ? 'Prevendo...' : 'Prever genero'}
             </button>
           </form>
 
@@ -264,13 +270,6 @@ export default function App() {
               <p className="muted">Arquivo: {prediction.filename}</p>
               <h3>{prediction.predicted_genre}</h3>
               <p className="muted">Modelo: {prediction.model_name}</p>
-              {prediction.notes?.length ? (
-                <ul className="notes-list">
-                  {prediction.notes.map((note) => (
-                    <li key={note}>{note}</li>
-                  ))}
-                </ul>
-              ) : null}
             </div>
           ) : null}
 
@@ -282,71 +281,23 @@ export default function App() {
           ) : null}
         </Section>
 
-        <Section
-          title="Comparação do arquivo com o gênero previsto"
-          subtitle="Relação entre o áudio enviado e os padrões médios observados no dataset"
-        >
-          {prediction?.feature_comparison?.length ? (
-            <div className="comparison-table-wrap">
-              <table className="comparison-table">
-                <thead>
-                  <tr>
-                    <th>Feature</th>
-                    <th>Valor do arquivo</th>
-                    <th>Média do gênero previsto</th>
-                    <th>Média global</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {prediction.feature_comparison.map((item) => (
-                    <tr key={item.feature}>
-                      <td>{item.feature}</td>
-                      <td>{fmt(item.uploaded_value, 3)}</td>
-                      <td>{fmt(item.predicted_genre_mean, 3)}</td>
-                      <td>{fmt(item.global_mean, 3)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <p className="muted">Envie um arquivo para ver a comparação detalhada.</p>
-          )}
-
-          {prediction?.extracted_features ? (
-            <>
-              <h4>Features com maior variação no upload</h4>
-              <HorizontalBars
-                items={Object.entries(prediction.extracted_features).map(([feature, value]) => ({
-                  feature,
-                  value
-                }))}
-                labelKey="feature"
-                valueKey="value"
-              />
-            </>
-          ) : null}
-        </Section>
-
-        <Section title="Distribuição dos gêneros" subtitle="Base de treinamento atual (features pré-computadas do metadata)">
+        <Section title="Distribuicao dos generos" subtitle="Base de treinamento atual">
           {loadingDashboard ? <p className="muted">Carregando...</p> : null}
           {genreDistribution.length > 0 ? (
-            <HorizontalBars
-              items={genreDistribution}
-              labelKey="genre"
-              valueKey="count"
-              highlightLabel={predictedGenre}
-            />
+            <HorizontalBars items={genreDistribution} labelKey="genre" valueKey="count" highlightLabel={predictedGenre} />
           ) : (
-            <p className="muted">Distribuição indisponível. Rode `python src/extract_features.py`.</p>
+            <p className="muted">Distribuicao indisponivel.</p>
           )}
         </Section>
 
-        <Section title="Comparação entre modelos" subtitle="Decision Tree vs KNN vs Random Forest">
+        <Section title="Comparacao entre modelos" subtitle="Decision Tree vs KNN vs Random Forest">
           {modelComparison.length > 0 ? (
             <div className="cards-metrics">
               {modelComparison.map((item) => (
-                <article className="metric-card" key={item.model}>
+                <article
+                  className={`metric-card ${modelInfo?.metrics_summary?.best_model === item.model ? 'metric-card-best' : ''}`}
+                  key={item.model}
+                >
                   <h4>{item.model}</h4>
                   <p>Accuracy: {fmt(item.metrics.accuracy)}</p>
                   <p>Precision Macro: {fmt(item.metrics.precision_macro)}</p>
@@ -356,7 +307,7 @@ export default function App() {
               ))}
             </div>
           ) : (
-            <p className="muted">Comparação indisponível. Rode `python src/train.py`.</p>
+            <p className="muted">Comparacao indisponivel.</p>
           )}
 
           {modelInfo?.metrics_summary?.best_model ? (
@@ -366,64 +317,39 @@ export default function App() {
           ) : null}
         </Section>
 
-        <Section title="Matriz de confusão" subtitle="Desempenho do melhor modelo">
+        <Section title="Matriz de confusao" subtitle="Desempenho do melhor modelo">
           {confusionData?.matrix?.length ? (
             <ConfusionHeatmap labels={confusionData.labels} matrix={confusionData.matrix} />
           ) : (
-            <p className="muted">Matriz indisponível.</p>
+            <p className="muted">Matriz indisponivel.</p>
           )}
         </Section>
 
-        <Section title="Importância dos atributos (RF)" subtitle="Top features quando o melhor modelo é Random Forest">
+        <Section title="Importancia dos atributos (RF)" subtitle="Top features quando o melhor modelo e Random Forest">
           {featureImportance?.available ? (
             <HorizontalBars items={featureImportance.data} labelKey="feature" valueKey="importance" />
           ) : (
-            <p className="muted">{featureImportance?.reason || 'Importância indisponível.'}</p>
+            <p className="muted">{featureImportance?.reason || 'Importancia indisponivel.'}</p>
           )}
         </Section>
 
-        <Section title="PCA 2D" subtitle="Visualização da estrutura dos dados no espaço de features">
-          <PcaScatter data={pcaData?.data || []} />
-          {pcaData?.explained_variance_ratio ? (
-            <p className="muted">
-              Variância explicada: PC1={fmt(pcaData.explained_variance_ratio[0], 3)}, PC2={fmt(pcaData.explained_variance_ratio[1], 3)}
-            </p>
-          ) : null}
+        <Section title="Mapa de generos 2D (LDA)" subtitle="Projecao supervisionada para separar melhor os generos">
+          <EmbeddingScatter data={embeddingData?.data || []} xKey="x" yKey="y" title={embeddingData?.chart || 'LDA 2D'} />
         </Section>
 
-        <Section
-          title="Treinamento vs Demonstração"
-          subtitle="Como treinamento e demonstração se conectam na apresentação"
-        >
-          <div className="approach-grid">
-            <article>
-              <h4>Treinamento (features pré-computadas)</h4>
-              <p>
-                É o caminho principal do treino atual, com features prontas do `features.csv`, rápido e estável para
-                modelagem.
-              </p>
-            </article>
-            <article>
-              <h4>Demonstração (extração no upload)</h4>
-              <p>
-                O áudio enviado é transformado em features compatíveis com o esquema do modelo treinado, permitindo
-                testar MP3 novo no mesmo classificador.
-              </p>
-            </article>
-          </div>
-
+        <Section title="Graficos salvos" subtitle="Artefatos gerados no backend">
           <div className="images-grid">
             <div>
-              <h5>Gráfico salvo: Matriz de confusão (imagem)</h5>
-              <img src={buildUrl('/assets/confusion_matrix_best_model.png')} alt="Matriz de confusão" />
+              <h5>Matriz de confusao</h5>
+              <img src={buildUrl('/assets/confusion_matrix_best_model.png')} alt="Matriz de confusao" />
             </div>
             <div>
-              <h5>Gráfico salvo: Comparação de métricas (imagem)</h5>
-              <img src={buildUrl('/assets/model_comparison_metrics.png')} alt="Comparação de métricas" />
+              <h5>Comparacao de metricas</h5>
+              <img src={buildUrl('/assets/model_comparison_metrics.png')} alt="Comparacao de metricas" />
             </div>
             <div>
-              <h5>Gráfico salvo: Importância de features (imagem)</h5>
-              <img src={buildUrl('/assets/random_forest_feature_importance.png')} alt="Importância de features" />
+              <h5>Importancia de features</h5>
+              <img src={buildUrl('/assets/random_forest_feature_importance.png')} alt="Importancia de features" />
             </div>
           </div>
         </Section>

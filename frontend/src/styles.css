@@ -184,9 +184,8 @@ h5 {
 
 .bar-label {
   font-size: 0.89rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  line-height: 1.2;
 }
 
 .bar-value {
@@ -206,6 +205,11 @@ h5 {
   border-radius: 10px;
   background: #f3fbf4;
   padding: 12px;
+}
+
+.metric-card-best {
+  background: #e8f6ec;
+  border-color: #9fcfb0;
 }
 
 .metric-card p {
@@ -262,6 +266,28 @@ h5 {
   max-height: 340px;
   border: 1px solid #c4dfcb;
   border-radius: 8px;
+}
+
+.genre-legend {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+}
+
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.86rem;
+  color: var(--text-main);
+}
+
+.legend-dot {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.25);
 }
 
 .approach-grid {
