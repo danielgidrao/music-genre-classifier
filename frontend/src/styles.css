@@ -1,15 +1,15 @@
 @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Sans:wght@400;600&display=swap');
 
 :root {
-  --bg-main: #edf5ee;
-  --bg-card: #f9fcf9;
-  --text-main: #163020;
-  --text-soft: #45604d;
-  --accent: #2d6a4f;
-  --accent-2: #40916c;
-  --accent-3: #74c69d;
+  --bg-main: #f6f3fb;
+  --bg-card: #fdfcff;
+  --text-main: #2b2140;
+  --text-soft: #6f6486;
+  --accent: #7c5ac7;
+  --accent-2: #6d4fb0;
+  --accent-3: #cdc1e9;
   --error: #9a031e;
-  --line: #c7dccb;
+  --line: #ddd6eb;
 }
 
 * {
@@ -42,10 +42,10 @@ h5 {
   margin-bottom: 22px;
   padding: 22px;
   border-radius: 14px;
-  border: 1px solid #93b69f;
-  background: #2d6a4f;
-  color: #f1f8f2;
-  box-shadow: 0 6px 18px rgba(28, 68, 45, 0.2);
+  border: 1px solid #baa9de;
+  background: #7356b6;
+  color: #faf7ff;
+  box-shadow: 0 6px 18px rgba(82, 58, 137, 0.2);
 }
 
 .hero h1 {
@@ -76,7 +76,7 @@ h5 {
   border: 1px solid var(--line);
   border-radius: 14px;
   background: var(--bg-card);
-  box-shadow: 0 3px 12px rgba(40, 89, 57, 0.08);
+  box-shadow: 0 3px 12px rgba(97, 70, 169, 0.08);
   padding: 16px;
 }
 
@@ -121,16 +121,28 @@ h5 {
 
 .prediction-box {
   margin-top: 14px;
-  border: 1px solid #b9d5c0;
+  border: 1px solid #dbd3ec;
   border-radius: 10px;
   padding: 12px;
-  background: #f2fbf3;
+  background: #f6f1ff;
 }
 
 .prediction-box h3 {
   margin: 6px 0;
   font-size: 1.5rem;
-  color: #1d5037;
+  color: #5f4698;
+}
+
+.probability-ranking {
+  padding-top: 14px;
+}
+
+.probability-ranking h4 {
+  margin-bottom: 10px;
+}
+
+.probability-ranking .bars-wrap {
+  gap: 6px;
 }
 
 .notes-list {
@@ -166,13 +178,13 @@ h5 {
 }
 
 .bar-row.highlighted .bar-label {
-  color: #1b5e3a;
+  color: #5f4698;
   font-weight: 700;
 }
 
 .bar-track {
   height: 12px;
-  background: #dbeadc;
+  background: #eee8f7;
   border-radius: 99px;
   overflow: hidden;
 }
@@ -201,15 +213,15 @@ h5 {
 }
 
 .metric-card {
-  border: 1px solid #c9dfcf;
+  border: 1px solid #ddd7ec;
   border-radius: 10px;
-  background: #f3fbf4;
+  background: #f7f3ff;
   padding: 12px;
 }
 
 .metric-card-best {
-  background: #e8f6ec;
-  border-color: #9fcfb0;
+  background: #efe7ff;
+  border-color: #bba8df;
 }
 
 .metric-card p {
@@ -257,14 +269,14 @@ h5 {
 }
 
 .comparison-table th {
-  color: #1e4a31;
-  background: #edf7ef;
+  color: #5a447f;
+  background: #f4f0fa;
 }
 
 .pca-scatter svg {
   width: 100%;
   max-height: 340px;
-  border: 1px solid #c4dfcb;
+  border: 1px solid #ddd6eb;
   border-radius: 8px;
 }
 
@@ -297,31 +309,10 @@ h5 {
 }
 
 .approach-grid article {
-  border: 1px solid #c2dcc9;
+  border: 1px solid #ddd7ec;
   border-radius: 10px;
   padding: 10px;
-  background: #f4fbf5;
-}
-
-.images-grid {
-  margin-top: 14px;
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 10px;
-}
-
-.images-grid h5 {
-  margin: 0 0 8px;
-  font-size: 0.95rem;
-}
-
-.images-grid img {
-  width: 100%;
-  border-radius: 8px;
-  border: 1px solid #c8decf;
-  min-height: 130px;
-  object-fit: cover;
-  background: #eef8ef;
+  background: #f7f3ff;
 }
 
 @media (max-width: 760px) {

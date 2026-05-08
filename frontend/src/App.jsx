@@ -83,7 +83,7 @@ function ConfusionHeatmap({ labels, matrix }) {
                 return (
                   <td
                     key={`${rowIdx}-${colIdx}`}
-                    style={{ backgroundColor: `rgba(30, 110, 65, ${0.08 + 0.85 * intensity})` }}
+                    style={{ backgroundColor: `rgba(139, 92, 246, ${0.08 + 0.85 * intensity})` }}
                   >
                     {value}
                   </td>
@@ -111,7 +111,7 @@ function EmbeddingScatter({ data, xKey = 'x', yKey = 'y', title = 'Embedding 2D'
     const maxY = Math.max(...ys);
 
     const genreList = [...new Set(sample.map((p) => p.genre))];
-    const palette = ['#e63946', '#ff7f11', '#ffbe0b', '#2a9d8f', '#3a86ff', '#8338ec', '#f72585', '#4361ee'];
+    const palette = ['#8b5cf6', '#a855f7', '#6366f1', '#ec4899', '#f59e0b', '#14b8a6', '#3b82f6', '#ef4444'];
     const colorByGenre = Object.fromEntries(genreList.map((g, idx) => [g, palette[idx % palette.length]]));
 
     const mapped = sample.map((p, idx) => {
@@ -138,7 +138,7 @@ function EmbeddingScatter({ data, xKey = 'x', yKey = 'y', title = 'Embedding 2D'
       <svg viewBox="0 0 800 340" role="img" aria-label={title}>
         <rect x="0" y="0" width="800" height="340" fill="rgba(255,255,255,0.5)" rx="8" />
         {points.map((pt) => (
-          <circle key={pt.id} cx={pt.x} cy={pt.y} r="4.2" fill={pt.color} opacity="0.84" stroke="#133022" strokeWidth="0.45" />
+          <circle key={pt.id} cx={pt.x} cy={pt.y} r="4.2" fill={pt.color} opacity="0.84" stroke="#2e1065" strokeWidth="0.45" />
         ))}
       </svg>
       <div className="genre-legend">
@@ -278,10 +278,10 @@ export default function App() {
           ) : null}
 
           {prediction?.probabilities?.length ? (
-            <>
+            <div className="probability-ranking">
               <h4>Ranking de probabilidades</h4>
               <HorizontalBars items={prediction.probabilities} labelKey="genre" valueKey="probability" />
-            </>
+            </div>
           ) : null}
         </Section>
 
@@ -346,23 +346,6 @@ export default function App() {
 
         <Section title="Mapa de generos 2D (LDA)" subtitle="Projecao supervisionada para separar melhor os generos">
           <EmbeddingScatter data={embeddingData?.data || []} xKey="x" yKey="y" title={embeddingData?.chart || 'LDA 2D'} />
-        </Section>
-
-        <Section title="Graficos salvos" subtitle="Artefatos gerados no backend">
-          <div className="images-grid">
-            <div>
-              <h5>Matriz de confusao</h5>
-              <img src={buildUrl('/assets/confusion_matrix_best_model.png')} alt="Matriz de confusao" />
-            </div>
-            <div>
-              <h5>Comparacao de metricas</h5>
-              <img src={buildUrl('/assets/model_comparison_metrics.png')} alt="Comparacao de metricas" />
-            </div>
-            <div>
-              <h5>Importancia de features</h5>
-              <img src={buildUrl('/assets/random_forest_feature_importance.png')} alt="Importancia de features" />
-            </div>
-          </div>
         </Section>
 
         {dashboardError ? <p className="error">Avisos de dados/API: {dashboardError}</p> : null}
