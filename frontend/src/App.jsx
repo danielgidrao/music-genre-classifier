@@ -160,6 +160,7 @@ export default function App() {
 
   const [modelInfo, setModelInfo] = useState(null);
   const [genreDistribution, setGenreDistribution] = useState([]);
+  const [datasetSplitCounts, setDatasetSplitCounts] = useState(null);
   const [modelComparison, setModelComparison] = useState([]);
   const [confusionData, setConfusionData] = useState(null);
   const [featureImportance, setFeatureImportance] = useState(null);
@@ -190,7 +191,10 @@ export default function App() {
         if (!mounted) return;
 
         if (infoRes.status === 'fulfilled') setModelInfo(infoRes.value);
-        if (distRes.status === 'fulfilled') setGenreDistribution(distRes.value.data || []);
+        if (distRes.status === 'fulfilled') {
+          setGenreDistribution(distRes.value.data || []);
+          setDatasetSplitCounts(distRes.value.counts_summary || null);
+        }
         if (compareRes.status === 'fulfilled') setModelComparison(compareRes.value.data || []);
         if (cmRes.status === 'fulfilled') setConfusionData(cmRes.value);
         if (importanceRes.status === 'fulfilled') setFeatureImportance(importanceRes.value);
@@ -281,10 +285,17 @@ export default function App() {
           ) : null}
         </Section>
 
-        <Section title="Distribuicao dos generos" subtitle="Base de treinamento atual">
+        <Section title="Distribuicao dos generos" subtitle="Apenas amostras utilizadas no training">
           {loadingDashboard ? <p className="muted">Carregando...</p> : null}
           {genreDistribution.length > 0 ? (
-            <HorizontalBars items={genreDistribution} labelKey="genre" valueKey="count" highlightLabel={predictedGenre} />
+            <>
+              <HorizontalBars items={genreDistribution} labelKey="genre" valueKey="count" highlightLabel={predictedGenre} />
+              {datasetSplitCounts ? (
+                <p className="muted">
+                  Training: {datasetSplitCounts.training} | Validation: {datasetSplitCounts.validation} | Test: {datasetSplitCounts.test}
+                </p>
+              ) : null}
+            </>
           ) : (
             <p className="muted">Distribuicao indisponivel.</p>
           )}

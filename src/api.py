@@ -258,7 +258,16 @@ def genre_distribution() -> dict[str, Any]:
     if df is None:
         raise HTTPException(status_code=400, detail="Processed dataset not found.")
 
-    counts_series = df["genre_top"].value_counts().sort_values(ascending=False)
+    if "split" in df.columns:
+        train_df = df[df["split"] == "training"].copy()
+        validation_count = int((df["split"] == "validation").sum())
+        test_count = int((df["split"] == "test").sum())
+    else:
+        train_df = df.copy()
+        validation_count = 0
+        test_count = 0
+
+    counts_series = train_df["genre_top"].value_counts().sort_values(ascending=False)
     counts = pd.DataFrame(
         {
             "genre": counts_series.index.astype(str),
@@ -268,6 +277,12 @@ def genre_distribution() -> dict[str, Any]:
 
     return {
         "chart": "genre_distribution",
+        "split_mode": "training_only" if "split" in df.columns else "full_dataset_fallback",
+        "counts_summary": {
+            "training": int(len(train_df)),
+            "validation": validation_count,
+            "test": test_count,
+        },
         "data": counts.to_dict(orient="records"),
     }
 

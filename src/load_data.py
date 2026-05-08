@@ -5,6 +5,7 @@ import ast
 import logging
 from typing import Optional
 
+import numpy as np
 import pandas as pd
 
 try:
@@ -14,6 +15,8 @@ except ImportError:  # pragma: no cover
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
+
+EXPECTED_SPLITS = {"training", "validation", "test"}
 
 
 def _literal_eval_or_none(value):
@@ -83,6 +86,50 @@ def filter_small_subset_with_known_genre(tracks: pd.DataFrame) -> pd.DataFrame:
     return filtered
 
 
+def validate_tabular_dataset(df: pd.DataFrame) -> None:
+    """
+    Validate structural consistency of the flattened tabular dataset before training.
+    """
+    required_columns = {"track_id", "genre_top"}
+    missing_required = [col for col in required_columns if col not in df.columns]
+    if missing_required:
+        raise ValueError(f"Tabular dataset is missing required columns: {missing_required}")
+
+    duplicated_track_ids = int(df["track_id"].duplicated().sum())
+    if duplicated_track_ids:
+        raise ValueError(f"Found duplicated track_id values in tabular dataset: {duplicated_track_ids}")
+
+    blank_genres = int(df["genre_top"].astype(str).str.strip().eq("").sum())
+    if blank_genres:
+        raise ValueError(f"Found blank genre_top labels in tabular dataset: {blank_genres}")
+
+    if "split" in df.columns:
+        split_values = set(df["split"].dropna().astype(str).unique())
+        invalid_splits = sorted(split_values - EXPECTED_SPLITS)
+        if invalid_splits:
+            raise ValueError(f"Found invalid split labels in tabular dataset: {invalid_splits}")
+
+    numeric_cols = infer_tabular_feature_columns(df)
+    if numeric_cols:
+        numeric_frame = df[numeric_cols].apply(pd.to_numeric, errors="coerce")
+        non_finite_mask = ~np.isfinite(numeric_frame.to_numpy())
+        if non_finite_mask.any():
+            bad_cols = numeric_frame.columns[non_finite_mask.any(axis=0)].tolist()
+            raise ValueError(
+                "Found NaN or infinite values in numeric feature columns: "
+                f"{bad_cols[:10]}"
+            )
+
+        constant_cols = numeric_frame.nunique(dropna=False)
+        zero_variance_cols = constant_cols[constant_cols <= 1].index.tolist()
+        if zero_variance_cols:
+            logger.warning(
+                "Detected %d constant numeric feature columns. Example: %s",
+                len(zero_variance_cols),
+                zero_variance_cols[:5],
+            )
+
+
 def build_path_a_dataframe(
     tracks: pd.DataFrame,
     precomputed_features: pd.DataFrame,
@@ -94,6 +141,7 @@ def build_path_a_dataframe(
     filtered_tracks = filter_small_subset_with_known_genre(tracks)
 
     common_ids = filtered_tracks.index.intersection(precomputed_features.index)
+    logger.info("Matched %d track ids between metadata and precomputed features", len(common_ids))
     merged = precomputed_features.loc[common_ids].copy()
 
     # Flatten feature columns
@@ -104,7 +152,13 @@ def build_path_a_dataframe(
     if ("set", "split") in filtered_tracks.columns:
         merged["split"] = filtered_tracks.loc[common_ids, ("set", "split")].astype(str).values
 
+    before_dropna = len(merged)
     merged = merged.dropna(axis=0).reset_index(drop=True)
+    dropped_rows = before_dropna - len(merged)
+    if dropped_rows:
+        logger.info("Dropped %d rows with missing values after merge", dropped_rows)
+
+    validate_tabular_dataset(merged)
 
     if output_path:
         output_path.parent.mkdir(parents=True, exist_ok=True)
